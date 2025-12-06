@@ -7,7 +7,10 @@
       "Bash(pyinstaller:*)",
       "Bash(explorer:*)",
       "Bash(start TomatoTimer.exe)",
-      "Bash(git add:*)"
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(git remote add:*)"
     ],
     "deny": [],
     "ask": []
