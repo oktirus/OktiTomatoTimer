@@ -1,7 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python main.py:*)"
+      "Bash(python main.py:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(pyinstaller:*)",
+      "Bash(explorer:*)",
+      "Bash(start TomatoTimer.exe)",
+      "Bash(git add:*)"
     ],
     "deny": [],
     "ask": []

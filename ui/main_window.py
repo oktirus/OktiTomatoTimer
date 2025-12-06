@@ -26,14 +26,16 @@ class MainWindow:
 
         # Налаштування вікна
         self.root.title("TomatoTimer")
-        self.root.geometry("400x500")
+        self.root.geometry("420x500")
         self.root.resizable(False, False)
 
         # Ініціалізуємо компоненти
         work_duration = self.config.get("work_duration", 25)
         break_duration = self.config.get("break_duration", 5)
+        long_break_duration = self.config.get("long_break_duration", 10)
+        pomodoros_until_long_break = self.config.get("pomodoros_until_long_break", 4)
 
-        self.timer = PomodoroTimer(work_duration, break_duration)
+        self.timer = PomodoroTimer(work_duration, break_duration, long_break_duration, pomodoros_until_long_break)
         self.sound_manager = SoundManager()
         self.tips_manager = TipsManager()
 
@@ -74,13 +76,44 @@ class MainWindow:
         main_frame = ttk.Frame(self.root, padding="20")
         main_frame.pack(fill=tk.BOTH, expand=True)
 
+        # Верхня панель з заголовком та іконкою налаштувань
+        header_frame = ttk.Frame(main_frame)
+        header_frame.pack(fill=tk.X, pady=(0, 20))
+
+        # Іконка налаштувань (абсолютно справа)
+        settings_button = tk.Button(
+            header_frame,
+            text="⚙",
+            command=self._on_settings_click,
+            font=("Segoe UI Emoji", 20),
+            width=2,
+            height=1,
+            bg="#f0f0f0",
+            relief=tk.FLAT,
+            cursor="hand2",
+            borderwidth=0
+        )
+        settings_button.pack(side=tk.RIGHT)
+
+        # Контейнер для іконки та заголовка (по центру)
+        title_container = ttk.Frame(header_frame)
+        title_container.pack(expand=True)
+
+        # Іконка помідора
+        icon_label = ttk.Label(
+            title_container,
+            text="🍅",
+            font=("Segoe UI Emoji", 24)
+        )
+        icon_label.pack(side=tk.LEFT, padx=(0, 8))
+
         # Заголовок
         title_label = ttk.Label(
-            main_frame,
-            text="🍅 TomatoTimer",
+            title_container,
+            text="TomatoTimer",
             font=("Arial", 24, "bold")
         )
-        title_label.pack(pady=(0, 20))
+        title_label.pack(side=tk.LEFT)
 
         # Індикатор стану
         self.state_label = ttk.Label(
@@ -90,13 +123,34 @@ class MainWindow:
         )
         self.state_label.pack(pady=(0, 10))
 
+        # Контейнер для таймера з кнопкою
+        timer_container = ttk.Frame(main_frame)
+        timer_container.pack(pady=20)
+
         # Дисплей таймера
         self.timer_label = ttk.Label(
-            main_frame,
+            timer_container,
             text="25:00",
             font=("Arial", 72, "bold")
         )
-        self.timer_label.pack(pady=20)
+        self.timer_label.pack(side=tk.LEFT)
+
+        # Кнопка додавання 1 хвилини (праворуч від таймера, зверху)
+        self.add_time_button = tk.Button(
+            timer_container,
+            text="+",
+            command=self._on_add_time_click,
+            font=("Arial", 10, "bold"),
+            width=2,
+            height=1,
+            bg="#E5E7EB",
+            fg="#374151",
+            relief=tk.FLAT,
+            cursor="hand2",
+            state=tk.DISABLED,
+            borderwidth=0
+        )
+        self.add_time_button.pack(side=tk.LEFT, anchor=tk.N, padx=(5, 0))
 
         # Прогрес-бар
         self.progress = ttk.Progressbar(
@@ -161,19 +215,6 @@ class MainWindow:
         )
         self.pomodoros_label.grid(row=0, column=1, padx=5)
 
-        # Кнопка налаштувань (збільшена висота)
-        settings_button = tk.Button(
-            main_frame,
-            text="⚙ Налаштування",
-            command=self._on_settings_click,
-            font=("Arial", 12),
-            height=2,
-            bg="#f0f0f0",
-            relief=tk.RAISED,
-            cursor="hand2"
-        )
-        settings_button.pack(pady=10, ipadx=20)
-
     def _on_start_click(self):
         """Обробка натискання кнопки Старт"""
         if self.timer.state == TimerState.IDLE:
@@ -183,6 +224,7 @@ class MainWindow:
             # Оновлюємо кнопки
             self.start_button.config(state=tk.DISABLED)
             self.pause_button.config(state=tk.NORMAL)
+            self.add_time_button.config(state=tk.NORMAL)
 
         elif self.timer.state == TimerState.PAUSED:
             self.timer.resume()
@@ -191,6 +233,7 @@ class MainWindow:
             # Оновлюємо кнопки
             self.start_button.config(state=tk.DISABLED)
             self.pause_button.config(state=tk.NORMAL, text="Пауза")
+            self.add_time_button.config(state=tk.NORMAL)
 
     def _on_pause_click(self):
         """Обробка натискання кнопки Пауза"""
@@ -210,9 +253,16 @@ class MainWindow:
         # Оновлюємо кнопки
         self.start_button.config(state=tk.NORMAL)
         self.pause_button.config(state=tk.DISABLED, text="Пауза")
+        self.add_time_button.config(state=tk.DISABLED)
 
         # Оновлюємо відображення
         self._update_display()
+
+    def _on_add_time_click(self):
+        """Обробка натискання кнопки додавання часу"""
+        if self.timer.state in [TimerState.WORK, TimerState.BREAK]:
+            self.timer.add_time(60)  # Додаємо 60 секунд (1 хвилину)
+            self._update_display()
 
     def _on_skip_to_break_click(self):
         """Швидкий перехід до перерви"""
@@ -223,10 +273,12 @@ class MainWindow:
             self._on_work_end()
             self.timer.start_break()
             self._start_timer_loop()
+            self.add_time_button.config(state=tk.NORMAL)
         elif self.timer.state == TimerState.IDLE:
             # Якщо неактивний, просто запускаємо перерву
             self.timer.start_break()
             self._start_timer_loop()
+            self.add_time_button.config(state=tk.NORMAL)
 
     def _on_settings_click(self):
         """Відкриття вікна налаштувань"""
@@ -238,9 +290,13 @@ class MainWindow:
         # Оновлюємо тривалість таймера
         work_duration = self.config.get("work_duration", 25)
         break_duration = self.config.get("break_duration", 5)
+        long_break_duration = self.config.get("long_break_duration", 10)
+        pomodoros_until_long_break = self.config.get("pomodoros_until_long_break", 4)
 
         self.timer.set_work_duration(work_duration)
         self.timer.set_break_duration(break_duration)
+        self.timer.set_long_break_duration(long_break_duration)
+        self.timer.set_pomodoros_until_long_break(pomodoros_until_long_break)
 
         # Оновлюємо гучність
         volume = self.config.get("volume", 50)
@@ -273,9 +329,17 @@ class MainWindow:
         """Колбек при кожному тіку таймера"""
         self._update_display()
 
-        # Оновлюємо час в треї
+        # Оновлюємо час в треї з прогресом та режимом
         if self.tray_icon:
-            self.tray_icon.update_time(self.timer.get_time_formatted())
+            progress = self.timer.get_progress()
+            # Визначаємо режим
+            if self.timer.state == TimerState.WORK:
+                mode = "work"
+            elif self.timer.state == TimerState.BREAK:
+                mode = "break"
+            else:
+                mode = "idle"
+            self.tray_icon.update_time(self.timer.get_time_formatted(), progress, mode)
 
     def _on_work_end(self):
         """Колбек при закінченні робочого часу"""
@@ -316,6 +380,7 @@ class MainWindow:
         # Оновлюємо кнопки
         self.start_button.config(state=tk.NORMAL)
         self.pause_button.config(state=tk.DISABLED)
+        self.add_time_button.config(state=tk.DISABLED)
 
         # Оновлюємо відображення
         self._update_display()
@@ -354,7 +419,10 @@ class MainWindow:
             self.progress['value'] = self.timer.get_progress() * 100
 
         elif self.timer.state == TimerState.BREAK:
-            self.state_label.config(text="☕ Перерва")
+            if self.timer.is_long_break:
+                self.state_label.config(text="🏖 Довга перерва")
+            else:
+                self.state_label.config(text="☕ Перерва")
             self.timer_label.config(foreground="#FF6F00")  # Помаранчевий
             self.progress['value'] = self.timer.get_progress() * 100
 

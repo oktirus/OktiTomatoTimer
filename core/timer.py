@@ -16,20 +16,25 @@ class TimerState(Enum):
 
 
 class PomodoroTimer:
-    def __init__(self, work_duration: int = 25, break_duration: int = 5):
+    def __init__(self, work_duration: int = 25, break_duration: int = 5, long_break_duration: int = 10, pomodoros_until_long_break: int = 4):
         """
         Ініціалізація таймера
 
         Args:
             work_duration: Тривалість робочого часу (хвилини)
             break_duration: Тривалість перерви (хвилини)
+            long_break_duration: Тривалість довгої перерви (хвилини)
+            pomodoros_until_long_break: Кількість помідорів до довгої перерви
         """
         self.work_duration = work_duration * 60  # Переводимо в секунди
         self.break_duration = break_duration * 60
+        self.long_break_duration = long_break_duration * 60
+        self.pomodoros_until_long_break = pomodoros_until_long_break
 
         self.state = TimerState.IDLE
         self.time_left = 0  # Залишок часу в секундах
         self.completed_pomodoros = 0
+        self.is_long_break = False  # Прапорець для довгої перерви
 
         # Колбеки для подій
         self.on_tick: Optional[Callable[[int], None]] = None
@@ -53,7 +58,15 @@ class PomodoroTimer:
     def start_break(self):
         """Початок перерви"""
         self.state = TimerState.BREAK
-        self.time_left = self.break_duration
+
+        # Перевіряємо, чи це час для довгої перерви
+        if self.completed_pomodoros > 0 and self.completed_pomodoros % self.pomodoros_until_long_break == 0:
+            self.time_left = self.long_break_duration
+            self.is_long_break = True
+        else:
+            self.time_left = self.break_duration
+            self.is_long_break = False
+
         self.completed_pomodoros += 1
 
         if self.on_break_start:
@@ -142,6 +155,14 @@ class PomodoroTimer:
         """Встановлення тривалості перерви"""
         self.break_duration = minutes * 60
 
+    def set_long_break_duration(self, minutes: int):
+        """Встановлення тривалості довгої перерви"""
+        self.long_break_duration = minutes * 60
+
+    def set_pomodoros_until_long_break(self, count: int):
+        """Встановлення кількості помідорів до довгої перерви"""
+        self.pomodoros_until_long_break = count
+
     def get_time_formatted(self) -> str:
         """
         Отримання часу у форматі MM:SS
@@ -179,3 +200,15 @@ class PomodoroTimer:
     def is_paused(self) -> bool:
         """Перевірка чи таймер на паузі"""
         return self.state == TimerState.PAUSED
+
+    def add_time(self, seconds: int = 60):
+        """
+        Додавання додаткового часу до поточного таймера
+
+        Args:
+            seconds: Кількість секунд для додавання (за замовчуванням 60 = 1 хвилина)
+        """
+        if self.state in [TimerState.WORK, TimerState.BREAK]:
+            self.time_left += seconds
+            if self.on_tick:
+                self.on_tick(self.time_left)

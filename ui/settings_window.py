@@ -23,10 +23,10 @@ class SettingsWindow:
         self.config = config_manager
         self.on_save_callback = on_save_callback
 
-        # Створюємо модальне вікно
+        # Створюємо модальне вікно (збільшена ширина на 30%: 500 -> 650)
         self.window = tk.Toplevel(parent)
         self.window.title("Налаштування")
-        self.window.geometry("500x600")
+        self.window.geometry("650x700")
         self.window.resizable(False, False)
         self.window.transient(parent)
         self.window.grab_set()
@@ -106,6 +106,36 @@ class SettingsWindow:
             width=10
         )
         break_spinbox.grid(row=1, column=1, sticky=tk.W, pady=5, padx=(10, 0))
+
+        # Довга перерва
+        ttk.Label(time_frame, text="Довга перерва (хвилини):").grid(
+            row=2, column=0, sticky=tk.W, pady=5
+        )
+
+        self.long_break_duration_var = tk.IntVar()
+        long_break_spinbox = ttk.Spinbox(
+            time_frame,
+            from_=5,
+            to=60,
+            textvariable=self.long_break_duration_var,
+            width=10
+        )
+        long_break_spinbox.grid(row=2, column=1, sticky=tk.W, pady=5, padx=(10, 0))
+
+        # Помідори до довгої перерви
+        ttk.Label(time_frame, text="Помідорів до довгої перерви:").grid(
+            row=3, column=0, sticky=tk.W, pady=5
+        )
+
+        self.pomodoros_until_long_break_var = tk.IntVar()
+        pomodoros_spinbox = ttk.Spinbox(
+            time_frame,
+            from_=2,
+            to=10,
+            textvariable=self.pomodoros_until_long_break_var,
+            width=10
+        )
+        pomodoros_spinbox.grid(row=3, column=1, sticky=tk.W, pady=5, padx=(10, 0))
 
         # --- Звукові налаштування ---
         sound_frame = ttk.LabelFrame(main_frame, text="Звукові налаштування", padding="10")
@@ -253,6 +283,8 @@ class SettingsWindow:
         """Завантаження поточних налаштувань"""
         self.work_duration_var.set(self.config.get("work_duration", 25))
         self.break_duration_var.set(self.config.get("break_duration", 5))
+        self.long_break_duration_var.set(self.config.get("long_break_duration", 10))
+        self.pomodoros_until_long_break_var.set(self.config.get("pomodoros_until_long_break", 4))
         self.volume_var.set(self.config.get("volume", 50))
         self.sound_enabled_var.set(self.config.get("sound_enabled", True))
         self.autostart_var.set(self.config.get("autostart_enabled", False))
@@ -330,6 +362,8 @@ class SettingsWindow:
         # Валідація
         work_duration = self.work_duration_var.get()
         break_duration = self.break_duration_var.get()
+        long_break_duration = self.long_break_duration_var.get()
+        pomodoros_until_long_break = self.pomodoros_until_long_break_var.get()
 
         if work_duration < 1 or work_duration > 60:
             messagebox.showerror(
@@ -345,9 +379,25 @@ class SettingsWindow:
             )
             return
 
+        if long_break_duration < 5 or long_break_duration > 60:
+            messagebox.showerror(
+                "Помилка",
+                "Довга перерва повинна бути від 5 до 60 хвилин"
+            )
+            return
+
+        if pomodoros_until_long_break < 2 or pomodoros_until_long_break > 10:
+            messagebox.showerror(
+                "Помилка",
+                "Кількість помідорів до довгої перерви повинна бути від 2 до 10"
+            )
+            return
+
         # Збереження
         self.config.set("work_duration", work_duration, save=False)
         self.config.set("break_duration", break_duration, save=False)
+        self.config.set("long_break_duration", long_break_duration, save=False)
+        self.config.set("pomodoros_until_long_break", pomodoros_until_long_break, save=False)
         self.config.set("volume", self.volume_var.get(), save=False)
         self.config.set("sound_enabled", self.sound_enabled_var.get(), save=False)
         self.config.set("autostart_enabled", self.autostart_var.get(), save=False)

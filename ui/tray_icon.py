@@ -33,18 +33,22 @@ class TrayIcon:
         self.on_click = on_click
         self.icon = None
         self.current_time = "25:00"
+        self.current_progress = 0.0  # Прогрес від 0.0 до 1.0
+        self.current_mode = "idle"  # idle, work, break
 
         if not PYSTRAY_AVAILABLE:
             print("[TRAY] pystray не встановлено. Іконка в треї недоступна.")
             print("[TRAY] Для увімкнення: pip install pystray pillow")
             return
 
-    def create_image(self, time_text="25:00"):
+    def create_image(self, time_text="25:00", progress=0.0, mode="idle"):
         """
         Створення зображення для іконки з текстом часу
 
         Args:
             time_text: Текст таймера для відображення
+            progress: Прогрес від 0.0 до 1.0
+            mode: Режим таймера (idle, work, break)
 
         Returns:
             PIL.Image або None
@@ -54,32 +58,48 @@ class TrayIcon:
             return self._create_simple_icon()
 
         try:
-            # Створюємо зображення 64x64
+            # Створюємо зображення 64x64 з ПРОЗОРИМ фоном (RGBA)
             width = 64
             height = 64
-            image = Image.new('RGB', (width, height), color=(255, 87, 34))  # Помаранчевий
+            image = Image.new('RGBA', (width, height), color=(0, 0, 0, 0))
 
             # Малюємо
             draw = ImageDraw.Draw(image)
 
-            # Малюємо круг
-            draw.ellipse([4, 4, 60, 60], fill=(255, 87, 34), outline=(255, 255, 255), width=2)
+            # Параметри кругового прогрес-бару
+            center_x = width // 2
+            center_y = height // 2
+            radius = 28  # Радіус кола
+            line_width = 6  # Товщина лінії
 
-            # Додаємо текст часу
-            try:
-                font = ImageFont.truetype("arial.ttf", 14)
-            except:
-                font = ImageFont.load_default()
+            # Координати для arc (обмежуюча рамка)
+            bbox = [
+                center_x - radius,
+                center_y - radius,
+                center_x + radius,
+                center_y + radius
+            ]
 
-            # Центруємо текст
-            bbox = draw.textbbox((0, 0), time_text, font=font)
-            text_width = bbox[2] - bbox[0]
-            text_height = bbox[3] - bbox[1]
+            # Малюємо повний круг білим кольором (фон)
+            draw.arc(bbox, 0, 360, fill=(255, 255, 255, 255), width=line_width)
 
-            x = (width - text_width) // 2
-            y = (height - text_height) // 2
+            # Малюємо круговий прогрес-бар
+            # Початок зверху (270 градусів = -90 від 0)
+            # progress: 0.0 (пусто) -> 1.0 (повний круг)
+            start_angle = -90  # Починаємо зверху
+            end_angle = start_angle + (360 * progress)
 
-            draw.text((x, y), time_text, fill=(255, 255, 255), font=font)
+            # Визначаємо колір заповнення залежно від режиму
+            if mode == "work":
+                fill_color = (46, 125, 50, 255)  # Зелений (#2E7D32)
+            elif mode == "break":
+                fill_color = (255, 111, 0, 255)  # Червоний/помаранчевий (#FF6F00)
+            else:
+                fill_color = (255, 255, 255, 255)  # Білий за замовчуванням
+
+            # Малюємо прогрес кольоровою лінією
+            if progress > 0:
+                draw.arc(bbox, start_angle, end_angle, fill=fill_color, width=line_width)
 
             return image
         except Exception as e:
@@ -97,21 +117,25 @@ class TrayIcon:
         except:
             return None
 
-    def update_time(self, time_text):
+    def update_time(self, time_text, progress=0.0, mode="idle"):
         """
         Оновлення часу на іконці
 
         Args:
             time_text: Новий час для відображення
+            progress: Прогрес від 0.0 до 1.0
+            mode: Режим таймера (idle, work, break)
         """
         if not PYSTRAY_AVAILABLE or not self.icon:
             return
 
         self.current_time = time_text
+        self.current_progress = progress
+        self.current_mode = mode
 
         try:
             # Оновлюємо іконку
-            new_image = self.create_image(time_text)
+            new_image = self.create_image(time_text, progress, mode)
             if new_image and self.icon:
                 self.icon.icon = new_image
         except Exception as e:
