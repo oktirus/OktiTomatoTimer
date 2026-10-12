@@ -23,10 +23,10 @@ class SettingsWindow:
         self.config = config_manager
         self.on_save_callback = on_save_callback
 
-        # Створюємо модальне вікно (збільшена ширина на 30%: 500 -> 650)
+        # Створюємо модальне вікно (збільшена ширина на 30%: 500 -> 650, висота на 10%: 700 -> 770)
         self.window = tk.Toplevel(parent)
         self.window.title("Налаштування")
-        self.window.geometry("650x700")
+        self.window.geometry("650x770")
         self.window.resizable(False, False)
         self.window.transient(parent)
         self.window.grab_set()
@@ -251,6 +251,15 @@ class SettingsWindow:
         )
         tips_check.grid(row=2, column=0, sticky=tk.W, pady=5)
 
+        # Автозапуск помідорів після перерви
+        self.auto_start_work_var = tk.BooleanVar()
+        auto_start_work_check = ttk.Checkbutton(
+            other_frame,
+            text="Автоматично запускати роботу після перерви",
+            variable=self.auto_start_work_var
+        )
+        auto_start_work_check.grid(row=3, column=0, sticky=tk.W, pady=5)
+
         # --- Кнопки ---
         buttons_frame = ttk.Frame(main_frame)
         buttons_frame.pack(pady=20)
@@ -290,6 +299,7 @@ class SettingsWindow:
         self.autostart_var.set(self.config.get("autostart_enabled", False))
         self.fullscreen_var.set(self.config.get("fullscreen_break", True))
         self.show_tips_var.set(self.config.get("show_tips", True))
+        self.auto_start_work_var.set(self.config.get("auto_start_work", False))
 
         # Завантажуємо звукові файли
         work_sound = self.config.get("work_end_sound", "")
@@ -403,6 +413,7 @@ class SettingsWindow:
         self.config.set("autostart_enabled", self.autostart_var.get(), save=False)
         self.config.set("fullscreen_break", self.fullscreen_var.get(), save=False)
         self.config.set("show_tips", self.show_tips_var.get(), save=False)
+        self.config.set("auto_start_work", self.auto_start_work_var.get(), save=False)
 
         # Зберігаємо звукові файли
         work_sound = self.work_end_sound_var.get()

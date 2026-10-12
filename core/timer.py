@@ -16,7 +16,7 @@ class TimerState(Enum):
 
 
 class PomodoroTimer:
-    def __init__(self, work_duration: int = 25, break_duration: int = 5, long_break_duration: int = 10, pomodoros_until_long_break: int = 4):
+    def __init__(self, work_duration: int = 25, break_duration: int = 5, long_break_duration: int = 10, pomodoros_until_long_break: int = 4, auto_start_work: bool = False):
         """
         Ініціалізація таймера
 
@@ -25,11 +25,13 @@ class PomodoroTimer:
             break_duration: Тривалість перерви (хвилини)
             long_break_duration: Тривалість довгої перерви (хвилини)
             pomodoros_until_long_break: Кількість помідорів до довгої перерви
+            auto_start_work: Автоматичний запуск роботи після перерви
         """
         self.work_duration = work_duration * 60  # Переводимо в секунди
         self.break_duration = break_duration * 60
         self.long_break_duration = long_break_duration * 60
         self.pomodoros_until_long_break = pomodoros_until_long_break
+        self.auto_start_work = auto_start_work
 
         self.state = TimerState.IDLE
         self.time_left = 0  # Залишок часу в секундах
@@ -138,12 +140,16 @@ class PomodoroTimer:
                 if self.on_break_end:
                     self.on_break_end()
 
-                # Повертаємось до стану очікування
-                self.state = TimerState.IDLE
-                self.time_left = 0
+                # Якщо увімкнено автозапуск, автоматично починаємо роботу
+                if self.auto_start_work:
+                    self.start_work()
+                else:
+                    # Повертаємось до стану очікування
+                    self.state = TimerState.IDLE
+                    self.time_left = 0
 
-                if self.on_state_change:
-                    self.on_state_change(self.state)
+                    if self.on_state_change:
+                        self.on_state_change(self.state)
 
             return False
 
@@ -162,6 +168,10 @@ class PomodoroTimer:
     def set_pomodoros_until_long_break(self, count: int):
         """Встановлення кількості помідорів до довгої перерви"""
         self.pomodoros_until_long_break = count
+
+    def set_auto_start_work(self, enabled: bool):
+        """Встановлення автоматичного запуску роботи після перерви"""
+        self.auto_start_work = enabled
 
     def get_time_formatted(self) -> str:
         """

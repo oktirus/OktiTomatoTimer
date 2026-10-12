@@ -34,8 +34,9 @@ class MainWindow:
         break_duration = self.config.get("break_duration", 5)
         long_break_duration = self.config.get("long_break_duration", 10)
         pomodoros_until_long_break = self.config.get("pomodoros_until_long_break", 4)
+        auto_start_work = self.config.get("auto_start_work", False)
 
-        self.timer = PomodoroTimer(work_duration, break_duration, long_break_duration, pomodoros_until_long_break)
+        self.timer = PomodoroTimer(work_duration, break_duration, long_break_duration, pomodoros_until_long_break, auto_start_work)
         self.sound_manager = SoundManager()
         self.tips_manager = TipsManager()
 
@@ -292,11 +293,13 @@ class MainWindow:
         break_duration = self.config.get("break_duration", 5)
         long_break_duration = self.config.get("long_break_duration", 10)
         pomodoros_until_long_break = self.config.get("pomodoros_until_long_break", 4)
+        auto_start_work = self.config.get("auto_start_work", False)
 
         self.timer.set_work_duration(work_duration)
         self.timer.set_break_duration(break_duration)
         self.timer.set_long_break_duration(long_break_duration)
         self.timer.set_pomodoros_until_long_break(pomodoros_until_long_break)
+        self.timer.set_auto_start_work(auto_start_work)
 
         # Оновлюємо гучність
         volume = self.config.get("volume", 50)
@@ -377,10 +380,20 @@ class MainWindow:
         if self.break_window:
             self.break_window.close()
 
-        # Оновлюємо кнопки
-        self.start_button.config(state=tk.NORMAL)
-        self.pause_button.config(state=tk.DISABLED)
-        self.add_time_button.config(state=tk.DISABLED)
+        # Якщо увімкнено автозапуск, таймер вже почав роботу
+        # Тому оновлюємо кнопки відповідно до стану
+        if self.timer.auto_start_work and self.timer.state == TimerState.WORK:
+            # Автозапуск увімкнено і таймер вже працює
+            self.start_button.config(state=tk.DISABLED)
+            self.pause_button.config(state=tk.NORMAL, text="Пауза")
+            self.add_time_button.config(state=tk.NORMAL)
+            # Запускаємо цикл таймера
+            self._start_timer_loop()
+        else:
+            # Автозапуск вимкнено - повертаємось до стану очікування
+            self.start_button.config(state=tk.NORMAL)
+            self.pause_button.config(state=tk.DISABLED)
+            self.add_time_button.config(state=tk.DISABLED)
 
         # Оновлюємо відображення
         self._update_display()
