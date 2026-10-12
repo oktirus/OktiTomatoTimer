@@ -5,9 +5,12 @@
 """
 
 import json
+import logging
 import os
 from typing import Any, Dict
 from config.default_settings import DEFAULT_SETTINGS
+
+log = logging.getLogger(__name__)
 
 
 class ConfigManager:
@@ -39,13 +42,31 @@ class ConfigManager:
             try:
                 with open(self.config_file, 'r', encoding='utf-8') as f:
                     self.settings = json.load(f)
+                if not isinstance(self.settings, dict):
+                    raise ValueError("очікується JSON-об'єкт")
+
+                # Старі версії мали ключі, які ні на що не впливали; "theme" тоді теж був мертвим
+                if "language" in self.settings:
+                    for key in ("language", "allow_skip_break", "track_statistics", "theme"):
+                        self.settings.pop(key, None)
+
+                # Старі версії зберігали назви звуків, яких ніколи не було в data/sounds
+                for key in ("work_end_sound", "break_end_sound"):
+                    if self.settings.get(key) in ("default_work_end.wav", "default_break_end.wav"):
+                        self.settings[key] = ""
 
                 # Додаємо відсутні налаштування зі значень за замовчуванням
                 for key, value in DEFAULT_SETTINGS.items():
                     if key not in self.settings:
                         self.settings[key] = value
-            except Exception as e:
-                print(f"Помилка завантаження налаштувань: {e}")
+            except (OSError, ValueError) as e:
+                # Зберігаємо пошкоджений файл, щоб наступний save() не знищив налаштування користувача
+                backup = self.config_file + ".bak"
+                log.error("Помилка завантаження налаштувань: %s. Копія: %s", e, backup)
+                try:
+                    os.replace(self.config_file, backup)
+                except OSError:
+                    log.exception("Не вдалося зберегти копію пошкоджених налаштувань")
                 self.settings = DEFAULT_SETTINGS.copy()
         else:
             # Використовуємо налаштування за замовчуванням
@@ -54,12 +75,17 @@ class ConfigManager:
 
     def save(self):
         """Збереження налаштувань у файл"""
+        # Пишемо у тимчасовий файл і атомарно підміняємо, щоб збій не залишив обрізаний JSON
+        tmp_file = self.config_file + ".tmp"
         try:
-            with open(self.config_file, 'w', encoding='utf-8') as f:
+            with open(tmp_file, 'w', encoding='utf-8') as f:
                 json.dump(self.settings, f, ensure_ascii=False, indent=2)
+            os.replace(tmp_file, self.config_file)
             return True
-        except Exception as e:
-            print(f"Помилка збереження налаштувань: {e}")
+        except (OSError, TypeError, ValueError) as e:
+            log.error("Помилка збереження налаштувань: %s", e)
+            if os.path.exists(tmp_file):
+                os.remove(tmp_file)
             return False
 
     def get(self, key: str, default: Any = None) -> Any:

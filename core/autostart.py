@@ -4,9 +4,12 @@
 Підтримка Windows, macOS, Linux
 """
 
+import logging
 import os
 import sys
 import platform
+
+log = logging.getLogger(__name__)
 
 
 class AutostartManager:
@@ -37,7 +40,7 @@ class AutostartManager:
         elif self.system == "Linux":
             return self._enable_linux()
         else:
-            print(f"Автозапуск не підтримується для {self.system}")
+            log.info(f"Автозапуск не підтримується для {self.system}")
             return False
 
     def disable(self):
@@ -83,7 +86,7 @@ class AutostartManager:
             return True
 
         except Exception as e:
-            print(f"Помилка увімкнення автозапуску Windows: {e}")
+            log.error(f"Помилка увімкнення автозапуску Windows: {e}")
             return False
 
     def _disable_windows(self):
@@ -109,7 +112,7 @@ class AutostartManager:
             return True
 
         except Exception as e:
-            print(f"Помилка вимкнення автозапуску Windows: {e}")
+            log.error(f"Помилка вимкнення автозапуску Windows: {e}")
             return False
 
     def _is_enabled_windows(self):
@@ -133,7 +136,7 @@ class AutostartManager:
                 return False
 
         except Exception as e:
-            print(f"Помилка перевірки автозапуску Windows: {e}")
+            log.error(f"Помилка перевірки автозапуску Windows: {e}")
             return False
 
     # macOS методи
@@ -162,7 +165,7 @@ class AutostartManager:
             return True
 
         except Exception as e:
-            print(f"Помилка увімкнення автозапуску macOS: {e}")
+            log.error(f"Помилка увімкнення автозапуску macOS: {e}")
             return False
 
     def _disable_macos(self):
@@ -176,7 +179,7 @@ class AutostartManager:
             return True
 
         except Exception as e:
-            print(f"Помилка вимкнення автозапуску macOS: {e}")
+            log.error(f"Помилка вимкнення автозапуску macOS: {e}")
             return False
 
     def _is_enabled_macos(self):
@@ -215,7 +218,7 @@ Comment=Pomodoro Timer
             return True
 
         except Exception as e:
-            print(f"Помилка увімкнення автозапуску Linux: {e}")
+            log.error(f"Помилка увімкнення автозапуску Linux: {e}")
             return False
 
     def _disable_linux(self):
@@ -229,7 +232,7 @@ Comment=Pomodoro Timer
             return True
 
         except Exception as e:
-            print(f"Помилка вимкнення автозапуску Linux: {e}")
+            log.error(f"Помилка вимкнення автозапуску Linux: {e}")
             return False
 
     def _is_enabled_linux(self):

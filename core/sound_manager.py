@@ -4,9 +4,12 @@
 Відповідає за відтворення звукових сигналів
 """
 
+import logging
 import os
 import platform
 from typing import Optional
+
+log = logging.getLogger(__name__)
 
 
 class SoundManager:
@@ -34,17 +37,17 @@ class SoundManager:
             import pygame
             pygame.mixer.init()
             self.sound_library = 'pygame'
-            print("[ЗВУК] Використовується: pygame")
-        except ImportError:
+            log.info("Використовується: pygame")
+        except Exception:  # ImportError або pygame.error, якщо немає аудіопристрою
             try:
                 # Спробуємо playsound як альтернативу
                 import playsound
                 self.sound_library = 'playsound'
-                print("[ЗВУК] Використовується: playsound")
+                log.info("Використовується: playsound")
             except ImportError:
                 # Використовуємо системні звуки
                 self.sound_library = 'system'
-                print("[ЗВУК] Використовується: системний (winsound/afplay/beep)")
+                log.info("Використовується: системний (winsound/afplay/beep)")
 
     def play_sound(self, sound_file: str):
         """
@@ -64,7 +67,7 @@ class SoundManager:
 
         # Перевіряємо існування файлу
         if not os.path.exists(sound_path):
-            print(f"Звуковий файл не знайдено: {sound_path}")
+            log.error(f"Звуковий файл не знайдено: {sound_path}")
             # Відтворюємо системний сигнал
             self._play_system_beep()
             return
@@ -77,7 +80,7 @@ class SoundManager:
             else:
                 self._play_with_winsound(sound_path)
         except Exception as e:
-            print(f"Помилка відтворення звуку: {e}")
+            log.error(f"Помилка відтворення звуку: {e}")
             self._play_system_beep()
 
     def _play_with_pygame(self, sound_path: str):
@@ -90,7 +93,7 @@ class SoundManager:
             sound.set_volume(self.volume / 100.0)
             sound.play()
         except Exception as e:
-            print(f"Помилка pygame: {e}")
+            log.error(f"Помилка pygame: {e}")
             self._play_system_beep()
 
     def _play_with_playsound(self, sound_path: str):
@@ -101,7 +104,7 @@ class SoundManager:
             # але простий у використанні
             playsound(sound_path, block=False)
         except Exception as e:
-            print(f"Помилка playsound: {e}")
+            log.error(f"Помилка playsound: {e}")
             self._play_system_beep()
 
     def _play_with_winsound(self, sound_path: str):
@@ -116,7 +119,7 @@ class SoundManager:
                 # Для інших форматів - системний сигнал
                 self._play_system_beep()
         except Exception as e:
-            print(f"Помилка winsound: {e}")
+            log.error(f"Помилка winsound: {e}")
             self._play_system_beep()
 
     def _play_system_beep(self):
@@ -133,7 +136,17 @@ class SoundManager:
             else:  # Linux
                 os.system('paplay /usr/share/sounds/freedesktop/stereo/complete.oga 2>/dev/null || beep')
         except Exception as e:
-            print(f"Помилка відтворення системного сигналу: {e}")
+            log.error(f"Помилка відтворення системного сигналу: {e}")
+
+    def supports_volume(self) -> bool:
+        """Чи враховується гучність поточним бекендом (winsound і playsound її ігнорують)"""
+        return self.sound_library == 'pygame'
+
+    def supported_extensions(self) -> list:
+        """Формати файлів, які поточний бекенд справді відтворює"""
+        if self.sound_library in ('pygame', 'playsound'):
+            return ['.wav', '.mp3', '.ogg']
+        return ['.wav']
 
     def set_volume(self, volume: int):
         """
@@ -171,6 +184,9 @@ class SoundManager:
         Args:
             sound_file: Файл для тестування (якщо None, використовується системний сигнал)
         """
+        if not self.enabled:
+            return
+
         if sound_file:
             self.play_sound(sound_file)
         else:
@@ -188,7 +204,7 @@ class SoundManager:
                 ]
                 return sorted(files)
         except Exception as e:
-            print(f"Помилка читання директорії звуків: {e}")
+            log.error(f"Помилка читання директорії звуків: {e}")
 
         return []
 
@@ -207,7 +223,7 @@ class SoundManager:
             import shutil
 
             if not os.path.exists(source_path):
-                print(f"Файл не знайдено: {source_path}")
+                log.error(f"Файл не знайдено: {source_path}")
                 return False
 
             if name is None:
@@ -218,5 +234,5 @@ class SoundManager:
             return True
 
         except Exception as e:
-            print(f"Помилка додавання звукового файлу: {e}")
+            log.error(f"Помилка додавання звукового файлу: {e}")
             return False

@@ -1,287 +1,189 @@
 # -*- coding: utf-8 -*-
 """
-Повноекранне вікно перерви для TomatoTimer
-Блокує екран і показує поради для розминки
+Вікно перерви TomatoTimer: перекриває всі екрани (або показується поверх інших вікон)
+і пропонує пораду для розминки
 """
 
-import tkinter as tk
-from tkinter import ttk, font
-from core.timer import PomodoroTimer
+from PySide6.QtCore import QObject, Qt, QTimer
+from PySide6.QtGui import QFont, QGuiApplication
+from PySide6.QtWidgets import QVBoxLayout, QWidget
+from qfluentwidgets import (BodyLabel, CaptionLabel, FluentIcon, MessageBox, ProgressRing, PushButton,
+                            SubtitleLabel, TitleLabel, isDarkTheme, setFont)
+
+from core.timer import PomodoroTimer, TimerState
 from core.tips_manager import TipsManager
+from ui.style import digits_font, phase_colors
 
 
-class BreakWindow:
-    def __init__(self, parent, timer: PomodoroTimer, tips_manager: TipsManager, on_close_callback=None):
+class _Surface(QWidget):
+    """Одне вікно перерви; Esc і закриття передаються власнику як запит завершити перерву"""
+
+    def __init__(self, owner: "BreakWindow", flags):
+        super().__init__(None, flags)
+        self.owner = owner
+        self.closing = False
+        self.setObjectName("breakSurface")
+        self.setStyleSheet(f"#breakSurface {{ background-color: {'#202020' if isDarkTheme() else '#F3F3F3'}; }}")
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.owner.request_skip()
+        else:
+            super().keyPressEvent(event)
+
+    def closeEvent(self, event):
+        if self.closing:
+            event.accept()
+        else:
+            event.ignore()
+            self.owner.request_skip()
+
+
+class BreakWindow(QObject):
+    def __init__(self, parent, timer: PomodoroTimer, tips_manager: TipsManager, on_close_callback=None,
+                 on_skip_callback=None, fullscreen: bool = True, show_tips: bool = True):
         """
-        Ініціалізація вікна перерви
-
         Args:
-            parent: Батьківське вікно
+            parent: Головне вікно (для власності Qt-об'єкта)
             timer: Об'єкт таймера
             tips_manager: Менеджер порад
             on_close_callback: Колбек при закритті
+            on_skip_callback: Колбек, коли користувач підтвердив дострокове завершення перерви
+            fullscreen: Перекрити всі екрани чи показати звичайне вікно поверх інших
+            show_tips: Показувати поради
         """
-        self.parent = parent
+        super().__init__(parent)
         self.timer = timer
         self.tips_manager = tips_manager
         self.on_close_callback = on_close_callback
+        self.on_skip_callback = on_skip_callback
+        self.fullscreen = fullscreen
+        self.current_tip = self.tips_manager.get_random_tip() if show_tips else None
+        self.surfaces = []
 
-        # Створюємо повноекранне вікно
-        self.window = tk.Toplevel(parent)
-        self.window.title("Перерва")
-
-        # Налаштовуємо повноекранний режим
-        self._setup_fullscreen()
-
-        # Отримуємо випадкову пораду
-        self.current_tip = self.tips_manager.get_random_tip()
-
-        # ID для оновлення таймера
-        self.timer_id = None
-
-        # Створюємо інтерфейс
-        self._create_widgets()
-
-        # Запускаємо оновлення таймера
-        self._start_timer_update()
-
-        # Обробка закриття вікна
-        self.window.protocol("WM_DELETE_WINDOW", self._on_close_attempt)
-
-    def _setup_fullscreen(self):
-        """Налаштування повноекранного режиму"""
-        # Робимо вікно повноекранним
-        self.window.attributes('-fullscreen', True)
-
-        # Вікно завжди поверх інших
-        self.window.attributes('-topmost', True)
-
-        # Забираємо декорації вікна
-        self.window.overrideredirect(True)
-
-        # Темний фон для зменшення навантаження на очі
-        self.window.configure(bg='#1E1E1E')
-
-        # Фокус на вікні
-        self.window.focus_force()
-
-        # Захоплюємо всі події клавіатури
-        self.window.grab_set()
-
-        # Прив'язуємо клавішу Escape для можливості аварійного виходу
-        self.window.bind('<Escape>', self._on_escape_press)
-
-    def _create_widgets(self):
-        """Створення віджетів"""
-        # Основний контейнер
-        main_frame = tk.Frame(self.window, bg='#1E1E1E')
-        main_frame.place(relx=0.5, rely=0.5, anchor=tk.CENTER)
-
-        # Заголовок
-        title_label = tk.Label(
-            main_frame,
-            text="☕ Час перерви!",
-            font=("Arial", 48, "bold"),
-            fg='#FF6F00',
-            bg='#1E1E1E'
-        )
-        title_label.pack(pady=(0, 30))
-
-        # Таймер
-        self.timer_label = tk.Label(
-            main_frame,
-            text="05:00",
-            font=("Arial", 96, "bold"),
-            fg='#FFFFFF',
-            bg='#1E1E1E'
-        )
-        self.timer_label.pack(pady=20)
-
-        # Рамка для поради
-        tip_frame = tk.Frame(
-            main_frame,
-            bg='#2E2E2E',
-            padx=40,
-            pady=30,
-            relief=tk.RAISED,
-            borderwidth=2
-        )
-        tip_frame.pack(pady=30, padx=50)
-
-        # Заголовок поради
-        tip_title = tk.Label(
-            tip_frame,
-            text=self.current_tip.get('title', 'Порада'),
-            font=("Arial", 28, "bold"),
-            fg='#4CAF50',
-            bg='#2E2E2E',
-            wraplength=800
-        )
-        tip_title.pack(pady=(0, 20))
-
-        # Текст поради
-        tip_description = tk.Label(
-            tip_frame,
-            text=self.current_tip.get('description', ''),
-            font=("Arial", 20),
-            fg='#E0E0E0',
-            bg='#2E2E2E',
-            wraplength=900,
-            justify=tk.CENTER
-        )
-        tip_description.pack(pady=10)
-
-        # Тривалість
-        duration = self.current_tip.get('duration', '')
-        if duration:
-            duration_label = tk.Label(
-                tip_frame,
-                text=f"⏱ {duration}",
-                font=("Arial", 16),
-                fg='#9E9E9E',
-                bg='#2E2E2E'
-            )
-            duration_label.pack(pady=(15, 0))
-
-        # Кнопка наступної поради
-        next_tip_button = tk.Button(
-            main_frame,
-            text="➡ Наступна порада",
-            command=self._show_next_tip,
-            font=("Arial", 14),
-            bg='#424242',
-            fg='#FFFFFF',
-            activebackground='#616161',
-            activeforeground='#FFFFFF',
-            padx=20,
-            pady=10,
-            relief=tk.RAISED,
-            borderwidth=2,
-            cursor='hand2'
-        )
-        next_tip_button.pack(pady=20)
-
-        # Інформація про вихід
-        info_label = tk.Label(
-            main_frame,
-            text="Натисніть Escape для виходу (потребує підтвердження)",
-            font=("Arial", 12),
-            fg='#757575',
-            bg='#1E1E1E'
-        )
-        info_label.pack(pady=(30, 0))
-
-    def _start_timer_update(self):
-        """Запуск оновлення таймера"""
-        self._update_timer()
-
-    def _update_timer(self):
-        """Оновлення відображення таймера"""
-        if self.timer.state.value == "break" and self.timer.time_left > 0:
-            # Оновлюємо час
-            self.timer_label.config(text=self.timer.get_time_formatted())
-
-            # Плануємо наступне оновлення через 500мс
-            self.timer_id = self.window.after(500, self._update_timer)
+        if fullscreen:
+            flags = Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool
+            primary = QGuiApplication.primaryScreen()
+            # Основний екран першим: на ньому контент
+            for screen in [primary] + [s for s in QGuiApplication.screens() if s is not primary]:
+                surface = _Surface(self, flags)
+                surface.setScreen(screen)
+                surface.setGeometry(screen.geometry())
+                self.surfaces.append(surface)
         else:
-            # Перерва закінчилась
-            self.close()
+            surface = _Surface(self, Qt.Window | Qt.WindowStaysOnTopHint)
+            surface.setWindowTitle("Перерва")
+            self.surfaces.append(surface)
+
+        self.window = self.surfaces[0]
+        self._create_content(self.window)
+
+        for surface in self.surfaces:
+            if fullscreen:
+                surface.showFullScreen()
+            else:
+                surface.show()
+        self.window.raise_()
+        self.window.activateWindow()
+
+        self.poll = QTimer(self)
+        self.poll.timeout.connect(self._update_timer)
+        self.poll.start(500)
+
+    def _create_content(self, surface: QWidget):
+        layout = QVBoxLayout(surface)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setSpacing(16)
+        layout.setContentsMargins(48, 40, 48, 40)
+
+        # На весь екран читаємо з відстані, тож шрифти більші
+        scale = 1.6 if self.fullscreen else 1.0
+        title = TitleLabel("Довга перерва" if self.timer.is_long_break else "Перерва", surface)
+        setFont(title, int(28 * scale), QFont.DemiBold)
+        layout.addWidget(title, 0, Qt.AlignHCenter)
+
+        size = 320 if self.fullscreen else 200
+        self.ring = ProgressRing(surface, useAni=False)
+        self.ring.setFixedSize(size, size)
+        self.ring.setStrokeWidth(12)
+        self.ring.setRange(0, 1000)
+        self.ring.setTextVisible(True)
+        self.ring.setFont(digits_font(size // 4))
+        self.ring.setCustomBarColor(*phase_colors(TimerState.BREAK))
+        layout.addWidget(self.ring, 0, Qt.AlignHCenter)
+
+        if self.current_tip:
+            tip = QWidget(surface)
+            tip.setFixedWidth(int(520 * scale))
+            tip_layout = QVBoxLayout(tip)
+            tip_layout.setContentsMargins(0, 16, 0, 0)
+            tip_layout.setSpacing(6)
+            self.tip_title = SubtitleLabel(tip)
+            self.tip_text = BodyLabel(tip)
+            self.tip_text.setWordWrap(True)
+            self.tip_duration = CaptionLabel(tip)
+            setFont(self.tip_title, int(20 * scale), QFont.DemiBold)
+            setFont(self.tip_text, int(14 * scale))
+            setFont(self.tip_duration, int(12 * scale))
+            for widget in (self.tip_title, self.tip_text, self.tip_duration):
+                tip_layout.addWidget(widget)
+            layout.addWidget(tip, 0, Qt.AlignHCenter)
+
+            next_button = PushButton(FluentIcon.SYNC, "Інша порада", surface)
+            next_button.clicked.connect(self._show_next_tip)
+            layout.addWidget(next_button, 0, Qt.AlignHCenter)
+            self._fill_tip()
+
+        hint = CaptionLabel("Натисніть Esc, щоб завершити перерву раніше", surface)
+        hint.setTextColor("#6E6E6E", "#A0A0A0")
+        layout.addWidget(hint, 0, Qt.AlignHCenter)
+
+        self._update_ring()
+
+    def _fill_tip(self):
+        self.tip_title.setText(self.current_tip.get("title", "Порада"))
+        self.tip_text.setText(self.current_tip.get("description", ""))
+        duration = self.current_tip.get("duration", "")
+        self.tip_duration.setText(f"Тривалість: {duration}" if duration else "")
 
     def _show_next_tip(self):
-        """Показати наступну пораду"""
-        # Отримуємо нову пораду
         self.current_tip = self.tips_manager.get_random_tip()
+        self._fill_tip()
 
-        # Оновлюємо вікно (перестворюємо віджети)
-        for widget in self.window.winfo_children():
-            widget.destroy()
+    def _update_ring(self):
+        self.ring.setFormat(self.timer.get_time_formatted())
+        self.ring.setValue(int(self.timer.get_progress() * 1000))
 
-        self._create_widgets()
+    def _update_timer(self):
+        # Пауза під час перерви не закриває вікно
+        if self.timer.state in (TimerState.BREAK, TimerState.PAUSED) and self.timer.time_left > 0:
+            self._update_ring()
+        else:
+            self.close()
 
-    def _on_escape_press(self, event=None):
-        """Обробка натискання Escape"""
-        # Створюємо діалог підтвердження
-        confirm_window = tk.Toplevel(self.window)
-        confirm_window.title("Підтвердження")
-        confirm_window.geometry("400x200")
-        confirm_window.configure(bg='#2E2E2E')
-        confirm_window.attributes('-topmost', True)
+    def request_skip(self):
+        """Запит на дострокове завершення перерви з підтвердженням"""
+        box = MessageBox("Завершити перерву?", "Таймер одразу перейде до наступного кроку.", self.window)
+        box.yesButton.setText("Завершити")
+        box.cancelButton.setText("Відпочивати далі")
+        if box.exec():
+            self.confirm_skip()
 
-        # Центруємо вікно
-        confirm_window.update_idletasks()
-        screen_width = confirm_window.winfo_screenwidth()
-        screen_height = confirm_window.winfo_screenheight()
-        x = (screen_width - 400) // 2
-        y = (screen_height - 200) // 2
-        confirm_window.geometry(f"+{x}+{y}")
-
-        # Текст
-        message = tk.Label(
-            confirm_window,
-            text="Ви впевнені, що хочете\nперервати перерву?",
-            font=("Arial", 16),
-            fg='#FFFFFF',
-            bg='#2E2E2E'
-        )
-        message.pack(pady=30)
-
-        # Кнопки
-        buttons_frame = tk.Frame(confirm_window, bg='#2E2E2E')
-        buttons_frame.pack(pady=20)
-
-        yes_button = tk.Button(
-            buttons_frame,
-            text="Так",
-            command=lambda: self._confirm_close(confirm_window),
-            font=("Arial", 14),
-            bg='#F44336',
-            fg='#FFFFFF',
-            padx=20,
-            pady=5,
-            width=10
-        )
-        yes_button.grid(row=0, column=0, padx=10)
-
-        no_button = tk.Button(
-            buttons_frame,
-            text="Ні",
-            command=confirm_window.destroy,
-            font=("Arial", 14),
-            bg='#4CAF50',
-            fg='#FFFFFF',
-            padx=20,
-            pady=5,
-            width=10
-        )
-        no_button.grid(row=0, column=1, padx=10)
-
-        # Фокус на кнопці "Ні"
-        no_button.focus()
-
-    def _confirm_close(self, confirm_window):
-        """Підтвердження закриття"""
-        confirm_window.destroy()
+    def confirm_skip(self):
+        if self.on_skip_callback:
+            self.on_skip_callback()
         self.close()
 
-    def _on_close_attempt(self):
-        """Спроба закрити вікно"""
-        # Перерва повинна тривати до кінця
-        # Показуємо діалог
-        self._on_escape_press()
-
     def close(self):
-        """Закриття вікна"""
-        # Зупиняємо оновлення таймера
-        if self.timer_id is not None:
-            self.window.after_cancel(self.timer_id)
-            self.timer_id = None
+        if not self.surfaces:
+            return
 
-        # Викликаємо колбек
+        self.poll.stop()
+        for surface in self.surfaces:
+            surface.closing = True
+            surface.close()
+            surface.deleteLater()
+        self.surfaces = []
+
         if self.on_close_callback:
             self.on_close_callback()
-
-        # Знищуємо вікно
-        try:
-            self.window.destroy()
-        except:
-            pass

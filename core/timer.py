@@ -35,8 +35,10 @@ class PomodoroTimer:
 
         self.state = TimerState.IDLE
         self.time_left = 0  # Залишок часу в секундах
+        self.total_time = 0  # Повна тривалість поточної фази (для прогресу)
         self.completed_pomodoros = 0
         self.is_long_break = False  # Прапорець для довгої перерви
+        self._previous_state = TimerState.WORK  # Стан, до якого повертаємось після паузи
 
         # Колбеки для подій
         self.on_tick: Optional[Callable[[int], None]] = None
@@ -46,112 +48,93 @@ class PomodoroTimer:
         self.on_break_end: Optional[Callable[[], None]] = None
         self.on_state_change: Optional[Callable[[TimerState], None]] = None
 
+    def _set_state(self, state: TimerState):
+        self.state = state
+        if self.on_state_change:
+            self.on_state_change(self.state)
+
     def start_work(self):
         """Початок робочого часу"""
         self.state = TimerState.WORK
-        self.time_left = self.work_duration
+        self.time_left = self.total_time = self.work_duration
 
         if self.on_work_start:
             self.on_work_start()
 
-        if self.on_state_change:
-            self.on_state_change(self.state)
+        self._set_state(TimerState.WORK)
 
-    def start_break(self):
+    def start_break(self, long_break: bool = False):
         """Початок перерви"""
         self.state = TimerState.BREAK
-
-        # Перевіряємо, чи це час для довгої перерви
-        if self.completed_pomodoros > 0 and self.completed_pomodoros % self.pomodoros_until_long_break == 0:
-            self.time_left = self.long_break_duration
-            self.is_long_break = True
-        else:
-            self.time_left = self.break_duration
-            self.is_long_break = False
-
-        self.completed_pomodoros += 1
+        self.is_long_break = long_break
+        self.time_left = self.total_time = self.long_break_duration if long_break else self.break_duration
 
         if self.on_break_start:
             self.on_break_start()
 
-        if self.on_state_change:
-            self.on_state_change(self.state)
+        self._set_state(TimerState.BREAK)
+
+    def complete_work(self):
+        """Завершення робочого часу (за таймером або достроково) і перехід до перерви"""
+        self.completed_pomodoros += 1
+
+        if self.on_work_end:
+            self.on_work_end()
+
+        self.start_break(self.completed_pomodoros % self.pomodoros_until_long_break == 0)
+
+    def finish_break(self):
+        """Завершення перерви (за таймером або достроково)"""
+        if self.auto_start_work:
+            self.start_work()
+        else:
+            self.time_left = self.total_time = 0
+            self._set_state(TimerState.IDLE)
+
+        # Викликаємо після переходу, щоб слухач бачив новий стан
+        if self.on_break_end:
+            self.on_break_end()
 
     def pause(self):
         """Пауза таймера"""
-        if self.state in [TimerState.WORK, TimerState.BREAK]:
-            self.state = TimerState.PAUSED
-
-            if self.on_state_change:
-                self.on_state_change(self.state)
+        if self.is_running():
+            self._previous_state = self.state
+            self._set_state(TimerState.PAUSED)
 
     def resume(self):
         """Відновлення таймера після паузи"""
         if self.state == TimerState.PAUSED:
-            # Визначаємо, до якого стану повертатись
-            if self.time_left > 0:
-                # Якщо час залишився, повертаємось до попереднього стану
-                # Це буде або WORK, або BREAK
-                if hasattr(self, '_previous_state'):
-                    self.state = self._previous_state
-                else:
-                    self.state = TimerState.WORK
-
-            if self.on_state_change:
-                self.on_state_change(self.state)
+            self._set_state(self._previous_state)
 
     def reset(self):
         """Скидання таймера"""
-        self.state = TimerState.IDLE
-        self.time_left = 0
-
-        if self.on_state_change:
-            self.on_state_change(self.state)
+        self.time_left = self.total_time = 0
+        self._set_state(TimerState.IDLE)
 
     def tick(self):
         """
         Оновлення таймера (викликається щосекунди)
 
         Returns:
-            bool: True якщо таймер активний, False якщо завершився
+            bool: True якщо фаза триває, False якщо таймер неактивний або фаза завершилась
         """
-        if self.state not in [TimerState.WORK, TimerState.BREAK]:
+        if not self.is_running():
             return False
+
+        self.time_left = max(0, self.time_left - 1)
+
+        if self.on_tick:
+            self.on_tick(self.time_left)
 
         if self.time_left > 0:
-            self.time_left -= 1
-
-            if self.on_tick:
-                self.on_tick(self.time_left)
-
             return True
+
+        if self.state == TimerState.WORK:
+            self.complete_work()
         else:
-            # Час закінчився
-            if self.state == TimerState.WORK:
-                # Закінчився робочий час
-                if self.on_work_end:
-                    self.on_work_end()
+            self.finish_break()
 
-                # Автоматично починаємо перерву
-                self.start_break()
-
-            elif self.state == TimerState.BREAK:
-                # Закінчилась перерва
-                if self.on_break_end:
-                    self.on_break_end()
-
-                # Якщо увімкнено автозапуск, автоматично починаємо роботу
-                if self.auto_start_work:
-                    self.start_work()
-                else:
-                    # Повертаємось до стану очікування
-                    self.state = TimerState.IDLE
-                    self.time_left = 0
-
-                    if self.on_state_change:
-                        self.on_state_change(self.state)
-
-            return False
+        return False
 
     def set_work_duration(self, minutes: int):
         """Встановлення тривалості робочого часу"""
@@ -186,26 +169,19 @@ class PomodoroTimer:
 
     def get_progress(self) -> float:
         """
-        Отримання прогресу таймера у відсотках
+        Отримання прогресу поточної фази
 
         Returns:
             float: Прогрес від 0.0 до 1.0
         """
-        if self.state == TimerState.WORK:
-            total = self.work_duration
-        elif self.state == TimerState.BREAK:
-            total = self.break_duration
-        else:
+        if self.state == TimerState.IDLE or self.total_time <= 0:
             return 0.0
 
-        if total == 0:
-            return 0.0
-
-        return 1.0 - (self.time_left / total)
+        return 1.0 - (self.time_left / self.total_time)
 
     def is_running(self) -> bool:
         """Перевірка чи таймер активний"""
-        return self.state in [TimerState.WORK, TimerState.BREAK]
+        return self.state in (TimerState.WORK, TimerState.BREAK)
 
     def is_paused(self) -> bool:
         """Перевірка чи таймер на паузі"""
@@ -218,7 +194,8 @@ class PomodoroTimer:
         Args:
             seconds: Кількість секунд для додавання (за замовчуванням 60 = 1 хвилина)
         """
-        if self.state in [TimerState.WORK, TimerState.BREAK]:
+        if self.is_running():
             self.time_left += seconds
+            self.total_time += seconds
             if self.on_tick:
                 self.on_tick(self.time_left)

@@ -5,22 +5,17 @@ echo   Збірка TomatoTimer в EXE файл
 echo ========================================
 echo.
 
-REM Перевірка наявності PyInstaller
-python -c "import PyInstaller" 2>nul
+REM Встановлення залежностей і PyInstaller фіксованих версій
+python -m pip install -r requirements.txt pyinstaller==6.17.0
 if errorlevel 1 (
-    echo [ПОМИЛКА] PyInstaller не встановлено!
-    echo.
-    echo Встановлюю PyInstaller...
-    pip install pyinstaller
-    if errorlevel 1 (
-        echo [ПОМИЛКА] Не вдалося встановити PyInstaller
-        pause
-        exit /b 1
-    )
-    echo.
-    echo ✅ PyInstaller успішно встановлено!
-    echo.
+    echo [ПОМИЛКА] Не вдалося встановити залежності
+    pause
+    exit /b 1
 )
+
+REM pygame опціональний (гучність, MP3/OGG); без нього збірка використовує winsound
+python -m pip install pygame==2.6.1 || echo [УВАГА] pygame не встановлено, звук лише WAV без гучності
+echo.
 
 REM Видалення старих файлів збірки
 if exist build rmdir /s /q build
@@ -31,11 +26,8 @@ echo Починаю збірку...
 echo.
 
 REM Збірка exe файлу
-pyinstaller --noconsole --onefile --name TomatoTimer ^
+python -m PyInstaller --noconsole --onefile --name TomatoTimer ^
     --add-data "data;data" ^
-    --hidden-import=PIL ^
-    --hidden-import=PIL._tkinter_finder ^
-    --hidden-import=pystray ^
     main.py
 
 if errorlevel 1 (

@@ -7,26 +7,25 @@ DEFAULT_SETTINGS = {
     # Налаштування таймера
     "work_duration": 25,  # хвилини
     "break_duration": 5,  # хвилини
+    "long_break_duration": 10,  # хвилини
+    "pomodoros_until_long_break": 4,
+    "auto_start_work": False,
 
     # Звукові налаштування
     "volume": 50,  # 0-100
     "sound_enabled": True,
-    "work_end_sound": "default_work_end.wav",
-    "break_end_sound": "default_break_end.wav",
+    "work_end_sound": "",  # порожньо = системний звук
+    "break_end_sound": "",
 
-    # Налаштування інтерфейсу
-    "language": "uk",  # українська
-    "theme": "light",  # light або dark
-
-    # Автозапуск
+    # Система
     "autostart_enabled": False,
+    "theme": "auto",  # auto (як у Windows), light, dark
 
-    # Налаштування блокування екрану
+    # Налаштування перерви
     "fullscreen_break": True,
     "show_tips": True,
-    "allow_skip_break": False,  # дозволити пропуск перерви
 
-    # Статистика
-    "track_statistics": True,
+    # Статистика за день
+    "stats_date": "",
     "completed_pomodoros": 0,
 }

@@ -4,11 +4,14 @@
 Відповідає за завантаження та вибір порад для перерв
 """
 
+import logging
 import json
 import os
 import random
 from typing import List, Dict, Optional
 from collections import deque
+
+log = logging.getLogger(__name__)
 
 
 class TipsManager:
@@ -49,7 +52,7 @@ class TipsManager:
                 self._save_tips()
 
         except Exception as e:
-            print(f"Помилка завантаження порад: {e}")
+            log.error(f"Помилка завантаження порад: {e}")
             self.tips = self._get_default_tips()
 
     def _save_tips(self):
@@ -61,7 +64,7 @@ class TipsManager:
             with open(self.tips_file, 'w', encoding='utf-8') as f:
                 json.dump({"tips": self.tips}, f, ensure_ascii=False, indent=2)
         except Exception as e:
-            print(f"Помилка збереження порад: {e}")
+            log.error(f"Помилка збереження порад: {e}")
 
     def _get_default_tips(self) -> List[Dict]:
         """Отримання базових порад на випадок помилки"""

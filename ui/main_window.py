@@ -1,451 +1,375 @@
 # -*- coding: utf-8 -*-
 """
-Головне вікно TomatoTimer
+Головне вікно TomatoTimer (PySide6 + Fluent Widgets)
 """
 
-import tkinter as tk
-from tkinter import ttk, font
-from core.timer import PomodoroTimer, TimerState
+import time
+from datetime import date
+
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtWidgets import QApplication, QHBoxLayout, QVBoxLayout, QWidget
+from qfluentwidgets import (BodyLabel, CaptionLabel, FluentIcon, FluentWindow, PrimaryPushButton,
+                            ProgressRing, SegmentedWidget, SubtitleLabel, SystemThemeListener,
+                            TransparentPushButton)
+
 from core.sound_manager import SoundManager
+from core.timer import PomodoroTimer, TimerState
 from core.tips_manager import TipsManager
+from ui.settings_page import SettingsPage
+from ui.style import digits_font, phase_colors
+from ui.tray_icon import TrayIcon, app_icon
 from utils.config_manager import ConfigManager
-from ui.tray_icon import TrayIcon
 
 
-class MainWindow:
-    def __init__(self, root: tk.Tk, config_manager: ConfigManager):
-        """
-        Ініціалізація головного вікна
+def pomodoros_text(count: int) -> str:
+    """Українська множина: 1 помідор, 2 помідори, 5 помідорів"""
+    if count % 10 == 1 and count % 100 != 11:
+        word = "помідор"
+    elif count % 10 in (2, 3, 4) and count % 100 not in (12, 13, 14):
+        word = "помідори"
+    else:
+        word = "помідорів"
+    return f"{count} {word}"
 
-        Args:
-            root: Кореневий tk віджет
-            config_manager: Менеджер конфігурації
-        """
-        self.root = root
+
+class TimerPage(QWidget):
+    """Сторінка таймера: кільце з часом, головна дія і другорядні дії"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("timerPage")
+
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        layout.setSpacing(12)
+
+        self.ring = ProgressRing(self, useAni=False)
+        self.ring.setFixedSize(240, 240)
+        self.ring.setStrokeWidth(10)
+        self.ring.setRange(0, 1000)
+        self.ring.setTextVisible(True)
+        self.ring.setFont(digits_font(56))
+        layout.addWidget(self.ring, 0, Qt.AlignHCenter)
+
+        self.state_label = SubtitleLabel(self)
+        layout.addWidget(self.state_label, 0, Qt.AlignHCenter)
+
+        self.cycle_label = CaptionLabel(self)
+        self.cycle_label.setTextColor("#6E6E6E", "#A0A0A0")
+        layout.addWidget(self.cycle_label, 0, Qt.AlignHCenter)
+        layout.addSpacing(12)
+
+        self.primary_button = PrimaryPushButton(FluentIcon.PLAY, "Почати", self)
+        self.primary_button.setMinimumWidth(200)
+        self.primary_button.setFixedHeight(44)
+        layout.addWidget(self.primary_button, 0, Qt.AlignHCenter)
+
+        actions = QHBoxLayout()
+        actions.setSpacing(4)
+        self.add_time_button = TransparentPushButton(FluentIcon.ADD, "1 хв", self)
+        self.skip_to_break_button = TransparentPushButton(FluentIcon.CAFE, "Перерва", self)
+        self.reset_button = TransparentPushButton(FluentIcon.RETURN, "Скинути", self)
+        for button in (self.add_time_button, self.skip_to_break_button, self.reset_button):
+            actions.addWidget(button)
+        layout.addLayout(actions)
+        layout.addSpacing(12)
+
+        self.stats_label = BodyLabel(self)
+        layout.addWidget(self.stats_label, 0, Qt.AlignHCenter)
+
+
+class MainWindow(FluentWindow):
+    def __init__(self, config_manager: ConfigManager):
+        super().__init__()
         self.config = config_manager
 
-        # Налаштування вікна
-        self.root.title("TomatoTimer")
-        self.root.geometry("420x500")
-        self.root.resizable(False, False)
+        self.setWindowTitle("TomatoTimer")
+        self.setWindowIcon(app_icon())
+        self.resize(580, 640)
+        self.setMinimumSize(500, 580)
 
-        # Ініціалізуємо компоненти
-        work_duration = self.config.get("work_duration", 25)
-        break_duration = self.config.get("break_duration", 5)
-        long_break_duration = self.config.get("long_break_duration", 10)
-        pomodoros_until_long_break = self.config.get("pomodoros_until_long_break", 4)
-        auto_start_work = self.config.get("auto_start_work", False)
-
-        self.timer = PomodoroTimer(work_duration, break_duration, long_break_duration, pomodoros_until_long_break, auto_start_work)
+        self.timer = PomodoroTimer(
+            self.config.get("work_duration"),
+            self.config.get("break_duration"),
+            self.config.get("long_break_duration"),
+            self.config.get("pomodoros_until_long_break"),
+            self.config.get("auto_start_work"),
+        )
         self.sound_manager = SoundManager()
         self.tips_manager = TipsManager()
+        self._apply_sound_settings()
 
-        # Встановлюємо гучність зі збережених налаштувань
-        volume = self.config.get("volume", 50)
-        self.sound_manager.set_volume(volume)
-
-        # Референс на вікно перерви
         self.break_window = None
+        self._quitting = False
+        self._tray_hint_shown = False
 
-        # ID для оновлення таймера
-        self.timer_id = None
+        # Тік раз на секунду; затримка рахується від годинника, тож похибка не накопичується
+        self.tick_timer = QTimer(self)
+        self.tick_timer.setSingleShot(True)
+        self.tick_timer.setTimerType(Qt.PreciseTimer)
+        self.tick_timer.timeout.connect(self._timer_loop)
+        self._next_tick_at = 0.0
 
-        # Іконка в треї
-        self.tray_icon = TrayIcon("TomatoTimer", self._on_tray_click)
+        self.tray_icon = TrayIcon("TomatoTimer", on_click=self._show_window, on_exit=self.quit, parent=self)
         self.tray_icon.start()
 
-        # Налаштовуємо колбеки таймера
+        self.theme_listener = SystemThemeListener(self)
+        self.theme_listener.start()
+
+        self.timer_page = TimerPage(self)
+        self.settings_page = SettingsPage(self.config, self.sound_manager, self._on_settings_saved, self)
+        self.navigationInterface.setReturnButtonVisible(False)  # сторінок лише дві, історія не потрібна
+        self.addSubInterface(self.timer_page, FluentIcon.STOP_WATCH, "Таймер")
+        self.addSubInterface(self.settings_page, FluentIcon.SETTING, "Налаштування")
+        self.navigationInterface.hide()
+        self.titleBar.hBoxLayout.setContentsMargins(16, 0, 0, 0)
+
+        self.tabs = SegmentedWidget(self)
+        self.tabs.addItem("timerPage", "Таймер", icon=FluentIcon.STOP_WATCH)
+        self.tabs.addItem("settingsPage", "Налаштування", icon=FluentIcon.SETTING)
+        self.tabs.setCurrentItem("timerPage")
+        self.tabs.currentItemChanged.connect(self._switch_tab)
+        self.stackedWidget.currentChanged.connect(
+            lambda index: self.tabs.setCurrentItem(self.stackedWidget.widget(index).objectName()))
+
+        tabs_row = QHBoxLayout()
+        tabs_row.setContentsMargins(0, 8, 0, 4)
+        tabs_row.addStretch()
+        tabs_row.addWidget(self.tabs)
+        tabs_row.addStretch()
+        content = QVBoxLayout()
+        content.setSpacing(0)
+        content.setContentsMargins(0, 0, 0, 0)
+        content.addLayout(tabs_row)
+        self.widgetLayout.removeWidget(self.stackedWidget)
+        content.addWidget(self.stackedWidget, 1)
+        self.widgetLayout.addLayout(content)
+
+        page = self.timer_page
+        self.primary_button = page.primary_button
+        self.add_time_button = page.add_time_button
+        self.skip_to_break_button = page.skip_to_break_button
+        self.reset_button = page.reset_button
+        self.primary_button.clicked.connect(self._on_primary_click)
+        self.add_time_button.clicked.connect(self._on_add_time_click)
+        self.skip_to_break_button.clicked.connect(self._on_skip_to_break_click)
+        self.reset_button.clicked.connect(self._on_reset_click)
+
         self._setup_timer_callbacks()
-
-        # Створюємо інтерфейс
-        self._create_widgets()
-
-        # Оновлюємо відображення
+        self._reset_stats_if_new_day()
         self._update_display()
 
+    def _switch_tab(self, route_key: str):
+        page = self.timer_page if route_key == "timerPage" else self.settings_page
+        self.switchTo(page)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.titleBar.setGeometry(0, 0, self.width(), self.titleBar.height())
+
     def _setup_timer_callbacks(self):
-        """Налаштування колбеків таймера"""
         self.timer.on_tick = self._on_timer_tick
         self.timer.on_work_end = self._on_work_end
         self.timer.on_break_start = self._on_break_start
         self.timer.on_break_end = self._on_break_end
         self.timer.on_state_change = self._on_state_change
 
-    def _create_widgets(self):
-        """Створення віджетів інтерфейсу"""
-        # Основний контейнер
-        main_frame = ttk.Frame(self.root, padding="20")
-        main_frame.pack(fill=tk.BOTH, expand=True)
+    # --- Дії ---
 
-        # Верхня панель з заголовком та іконкою налаштувань
-        header_frame = ttk.Frame(main_frame)
-        header_frame.pack(fill=tk.X, pady=(0, 20))
-
-        # Іконка налаштувань (абсолютно справа)
-        settings_button = tk.Button(
-            header_frame,
-            text="⚙",
-            command=self._on_settings_click,
-            font=("Segoe UI Emoji", 20),
-            width=2,
-            height=1,
-            bg="#f0f0f0",
-            relief=tk.FLAT,
-            cursor="hand2",
-            borderwidth=0
-        )
-        settings_button.pack(side=tk.RIGHT)
-
-        # Контейнер для іконки та заголовка (по центру)
-        title_container = ttk.Frame(header_frame)
-        title_container.pack(expand=True)
-
-        # Іконка помідора
-        icon_label = ttk.Label(
-            title_container,
-            text="🍅",
-            font=("Segoe UI Emoji", 24)
-        )
-        icon_label.pack(side=tk.LEFT, padx=(0, 8))
-
-        # Заголовок
-        title_label = ttk.Label(
-            title_container,
-            text="TomatoTimer",
-            font=("Arial", 24, "bold")
-        )
-        title_label.pack(side=tk.LEFT)
-
-        # Індикатор стану
-        self.state_label = ttk.Label(
-            main_frame,
-            text="Готовий до роботи",
-            font=("Arial", 14)
-        )
-        self.state_label.pack(pady=(0, 10))
-
-        # Контейнер для таймера з кнопкою
-        timer_container = ttk.Frame(main_frame)
-        timer_container.pack(pady=20)
-
-        # Дисплей таймера
-        self.timer_label = ttk.Label(
-            timer_container,
-            text="25:00",
-            font=("Arial", 72, "bold")
-        )
-        self.timer_label.pack(side=tk.LEFT)
-
-        # Кнопка додавання 1 хвилини (праворуч від таймера, зверху)
-        self.add_time_button = tk.Button(
-            timer_container,
-            text="+",
-            command=self._on_add_time_click,
-            font=("Arial", 10, "bold"),
-            width=2,
-            height=1,
-            bg="#E5E7EB",
-            fg="#374151",
-            relief=tk.FLAT,
-            cursor="hand2",
-            state=tk.DISABLED,
-            borderwidth=0
-        )
-        self.add_time_button.pack(side=tk.LEFT, anchor=tk.N, padx=(5, 0))
-
-        # Прогрес-бар
-        self.progress = ttk.Progressbar(
-            main_frame,
-            length=300,
-            mode='determinate'
-        )
-        self.progress.pack(pady=10)
-
-        # Кнопки керування
-        buttons_frame = ttk.Frame(main_frame)
-        buttons_frame.pack(pady=20)
-
-        self.start_button = ttk.Button(
-            buttons_frame,
-            text="Старт",
-            command=self._on_start_click,
-            width=12
-        )
-        self.start_button.grid(row=0, column=0, padx=5)
-
-        self.pause_button = ttk.Button(
-            buttons_frame,
-            text="Пауза",
-            command=self._on_pause_click,
-            width=12,
-            state=tk.DISABLED
-        )
-        self.pause_button.grid(row=0, column=1, padx=5)
-
-        self.reset_button = ttk.Button(
-            buttons_frame,
-            text="Скинути",
-            command=self._on_reset_click,
-            width=12
-        )
-        self.reset_button.grid(row=0, column=2, padx=5)
-
-        # Кнопка швидкого переходу до перерви
-        self.skip_to_break_button = ttk.Button(
-            buttons_frame,
-            text="➔ Перерва",
-            command=self._on_skip_to_break_click,
-            width=12
-        )
-        self.skip_to_break_button.grid(row=0, column=3, padx=5)
-
-        # Статистика
-        stats_frame = ttk.Frame(main_frame)
-        stats_frame.pack(pady=20)
-
-        ttk.Label(
-            stats_frame,
-            text="Виконано помідорів:",
-            font=("Arial", 11)
-        ).grid(row=0, column=0, padx=5)
-
-        self.pomodoros_label = ttk.Label(
-            stats_frame,
-            text="0",
-            font=("Arial", 11, "bold")
-        )
-        self.pomodoros_label.grid(row=0, column=1, padx=5)
-
-    def _on_start_click(self):
-        """Обробка натискання кнопки Старт"""
+    def _on_primary_click(self):
+        """Почати / пауза / продовжити"""
         if self.timer.state == TimerState.IDLE:
             self.timer.start_work()
             self._start_timer_loop()
-
-            # Оновлюємо кнопки
-            self.start_button.config(state=tk.DISABLED)
-            self.pause_button.config(state=tk.NORMAL)
-            self.add_time_button.config(state=tk.NORMAL)
-
-        elif self.timer.state == TimerState.PAUSED:
+        elif self.timer.is_running():
+            self.timer.pause()
+            self._stop_timer_loop()
+        else:
             self.timer.resume()
             self._start_timer_loop()
 
-            # Оновлюємо кнопки
-            self.start_button.config(state=tk.DISABLED)
-            self.pause_button.config(state=tk.NORMAL, text="Пауза")
-            self.add_time_button.config(state=tk.NORMAL)
-
-    def _on_pause_click(self):
-        """Обробка натискання кнопки Пауза"""
-        if self.timer.is_running():
-            self.timer.pause()
-            self._stop_timer_loop()
-
-            # Оновлюємо кнопки
-            self.start_button.config(state=tk.NORMAL)
-            self.pause_button.config(text="Продовжити")
-
     def _on_reset_click(self):
-        """Обробка натискання кнопки Скинути"""
-        self.timer.reset()
         self._stop_timer_loop()
-
-        # Оновлюємо кнопки
-        self.start_button.config(state=tk.NORMAL)
-        self.pause_button.config(state=tk.DISABLED, text="Пауза")
-        self.add_time_button.config(state=tk.DISABLED)
-
-        # Оновлюємо відображення
-        self._update_display()
+        self.timer.reset()
 
     def _on_add_time_click(self):
-        """Обробка натискання кнопки додавання часу"""
-        if self.timer.state in [TimerState.WORK, TimerState.BREAK]:
-            self.timer.add_time(60)  # Додаємо 60 секунд (1 хвилину)
-            self._update_display()
+        self.timer.add_time(60)
 
     def _on_skip_to_break_click(self):
-        """Швидкий перехід до перерви"""
         if self.timer.state == TimerState.WORK:
-            # Якщо працюємо, моментально переходимо до перерви
-            self._stop_timer_loop()
-            self.timer.completed_pomodoros += 1
-            self._on_work_end()
-            self.timer.start_break()
-            self._start_timer_loop()
-            self.add_time_button.config(state=tk.NORMAL)
+            self.timer.complete_work()
         elif self.timer.state == TimerState.IDLE:
-            # Якщо неактивний, просто запускаємо перерву
             self.timer.start_break()
-            self._start_timer_loop()
-            self.add_time_button.config(state=tk.NORMAL)
-
-    def _on_settings_click(self):
-        """Відкриття вікна налаштувань"""
-        from ui.settings_window import SettingsWindow
-        SettingsWindow(self.root, self.config, self._on_settings_saved)
+        self._start_timer_loop()
 
     def _on_settings_saved(self):
-        """Колбек після збереження налаштувань"""
-        # Оновлюємо тривалість таймера
-        work_duration = self.config.get("work_duration", 25)
-        break_duration = self.config.get("break_duration", 5)
-        long_break_duration = self.config.get("long_break_duration", 10)
-        pomodoros_until_long_break = self.config.get("pomodoros_until_long_break", 4)
-        auto_start_work = self.config.get("auto_start_work", False)
-
-        self.timer.set_work_duration(work_duration)
-        self.timer.set_break_duration(break_duration)
-        self.timer.set_long_break_duration(long_break_duration)
-        self.timer.set_pomodoros_until_long_break(pomodoros_until_long_break)
-        self.timer.set_auto_start_work(auto_start_work)
-
-        # Оновлюємо гучність
-        volume = self.config.get("volume", 50)
-        self.sound_manager.set_volume(volume)
-
-        # Оновлюємо відображення
+        """Застосування налаштувань (нові тривалості діють з наступної фази)"""
+        self.timer.set_work_duration(self.config.get("work_duration"))
+        self.timer.set_break_duration(self.config.get("break_duration"))
+        self.timer.set_long_break_duration(self.config.get("long_break_duration"))
+        self.timer.set_pomodoros_until_long_break(self.config.get("pomodoros_until_long_break"))
+        self.timer.set_auto_start_work(self.config.get("auto_start_work"))
+        self._apply_sound_settings()
         self._update_display()
+
+    def _apply_sound_settings(self):
+        self.sound_manager.set_volume(self.config.get("volume"))
+        if self.config.get("sound_enabled"):
+            self.sound_manager.enable()
+        else:
+            self.sound_manager.disable()
+
+    # --- Цикл таймера ---
 
     def _start_timer_loop(self):
-        """Запуск циклу оновлення таймера"""
-        if self.timer_id is None:
-            self._timer_loop()
+        if not self.tick_timer.isActive() and self.timer.is_running():
+            self._next_tick_at = time.monotonic() + 1
+            self.tick_timer.start(1000)
 
     def _stop_timer_loop(self):
-        """Зупинка циклу оновлення таймера"""
-        if self.timer_id is not None:
-            self.root.after_cancel(self.timer_id)
-            self.timer_id = None
+        self.tick_timer.stop()
 
     def _timer_loop(self):
-        """Основний цикл оновлення таймера (викликається кожну секунду)"""
-        if self.timer.is_running():
-            self.timer.tick()
-            # Плануємо наступне оновлення через 1 секунду
-            self.timer_id = self.root.after(1000, self._timer_loop)
-        else:
-            self.timer_id = None
+        if not self.timer.is_running():
+            return
+
+        self.timer.tick()
+
+        # Колбеки всередині tick() могли вже запустити новий цикл
+        if self.timer.is_running() and not self.tick_timer.isActive():
+            self._next_tick_at += 1
+            self.tick_timer.start(max(0, int((self._next_tick_at - time.monotonic()) * 1000)))
+
+    # --- Колбеки таймера ---
 
     def _on_timer_tick(self, time_left: int):
-        """Колбек при кожному тіку таймера"""
+        # Звук кінця перерви — лише коли вона дійшла до нуля, а не завершена вручну
+        if time_left == 0 and self.timer.state == TimerState.BREAK:
+            self.sound_manager.test_sound(self.config.get("break_end_sound") or None)
         self._update_display()
-
-        # Оновлюємо час в треї з прогресом та режимом
-        if self.tray_icon:
-            progress = self.timer.get_progress()
-            # Визначаємо режим
-            if self.timer.state == TimerState.WORK:
-                mode = "work"
-            elif self.timer.state == TimerState.BREAK:
-                mode = "break"
-            else:
-                mode = "idle"
-            self.tray_icon.update_time(self.timer.get_time_formatted(), progress, mode)
 
     def _on_work_end(self):
-        """Колбек при закінченні робочого часу"""
-        # Відтворюємо звук
-        sound_file = self.config.get("work_end_sound", "")
-        if sound_file:
-            self.sound_manager.play_sound(sound_file)
-        else:
-            self.sound_manager.test_sound()
-
-        # Оновлюємо статистику
-        self._update_display()
+        self.sound_manager.test_sound(self.config.get("work_end_sound") or None)
+        self._add_pomodoro_to_stats()
 
     def _on_break_start(self):
-        """Колбек при початку перерви"""
-        # Відкриваємо повноекранне вікно з порадами
         from ui.break_window import BreakWindow
+        if self.break_window:
+            self.break_window.close()
         self.break_window = BreakWindow(
-            self.root,
+            self,
             self.timer,
             self.tips_manager,
-            self._on_break_window_closed
+            on_close_callback=self._on_break_window_closed,
+            on_skip_callback=self.timer.finish_break,
+            fullscreen=self.config.get("fullscreen_break"),
+            show_tips=self.config.get("show_tips"),
         )
 
     def _on_break_end(self):
-        """Колбек при закінченні перерви"""
-        # Відтворюємо звук
-        sound_file = self.config.get("break_end_sound", "")
-        if sound_file:
-            self.sound_manager.play_sound(sound_file)
-        else:
-            self.sound_manager.test_sound()
-
-        # Закриваємо вікно перерви, якщо воно ще відкрите
+        """Таймер уже в IDLE або WORK"""
         if self.break_window:
             self.break_window.close()
-
-        # Якщо увімкнено автозапуск, таймер вже почав роботу
-        # Тому оновлюємо кнопки відповідно до стану
-        if self.timer.auto_start_work and self.timer.state == TimerState.WORK:
-            # Автозапуск увімкнено і таймер вже працює
-            self.start_button.config(state=tk.DISABLED)
-            self.pause_button.config(state=tk.NORMAL, text="Пауза")
-            self.add_time_button.config(state=tk.NORMAL)
-            # Запускаємо цикл таймера
-            self._start_timer_loop()
-        else:
-            # Автозапуск вимкнено - повертаємось до стану очікування
-            self.start_button.config(state=tk.NORMAL)
-            self.pause_button.config(state=tk.DISABLED)
-            self.add_time_button.config(state=tk.DISABLED)
-
-        # Оновлюємо відображення
-        self._update_display()
+        self._start_timer_loop()
 
     def _on_break_window_closed(self):
-        """Колбек при закритті вікна перерви"""
         self.break_window = None
 
     def _on_state_change(self, state: TimerState):
-        """Колбек при зміні стану таймера"""
         self._update_display()
 
-    def _on_tray_click(self):
-        """Колбек при кліку на іконку в треї"""
-        # Відновлюємо вікно, якщо воно згорнуте
-        self.root.deiconify()
-        self.root.lift()
-        self.root.focus_force()
+    # --- Вікно і трей ---
+
+    def _show_window(self):
+        self.showNormal()
+        self.raise_()
+        self.activateWindow()
+
+    def closeEvent(self, event):
+        """Хрестик згортає в трей, якщо він доступний"""
+        if self._quitting or not self.tray_icon.is_available():
+            self._shutdown()
+            event.accept()
+            QApplication.quit()
+            return
+
+        event.ignore()
+        self.hide()
+        if not self._tray_hint_shown:
+            self.tray_icon.notify("TomatoTimer працює у треї. Вийти можна через меню іконки.")
+            self._tray_hint_shown = True
+
+    def quit(self):
+        """Повне завершення програми"""
+        self._quitting = True
+        self.close()
+
+    def _shutdown(self):
+        self._stop_timer_loop()
+        if self.break_window:
+            self.break_window.close()
+        self.tray_icon.stop()
+        self.theme_listener.terminate()
+        self.theme_listener.wait(1000)
+
+    # --- Статистика ---
+
+    def _reset_stats_if_new_day(self):
+        today = date.today().isoformat()
+        if self.config.get("stats_date") != today:
+            self.config.update({"stats_date": today, "completed_pomodoros": 0})
+
+    def _add_pomodoro_to_stats(self):
+        self._reset_stats_if_new_day()
+        self.config.set("completed_pomodoros", self.config.get("completed_pomodoros", 0) + 1)
+
+    # --- Відображення ---
 
     def _update_display(self):
-        """Оновлення відображення"""
-        # Оновлюємо час
-        self.timer_label.config(text=self.timer.get_time_formatted())
+        state = self.timer.state
+        page = self.timer_page
 
-        # Оновлюємо стан
-        if self.timer.state == TimerState.IDLE:
-            self.state_label.config(text="Готовий до роботи")
-            self.timer_label.config(foreground="black")
-            work_duration = self.config.get("work_duration", 25)
-            self.timer_label.config(text=f"{work_duration:02d}:00")
-            self.progress['value'] = 0
-
-        elif self.timer.state == TimerState.WORK:
-            self.state_label.config(text="⏱ Робочий час")
-            self.timer_label.config(foreground="#2E7D32")  # Зелений
-            self.progress['value'] = self.timer.get_progress() * 100
-
-        elif self.timer.state == TimerState.BREAK:
-            if self.timer.is_long_break:
-                self.state_label.config(text="🏖 Довга перерва")
+        if state == TimerState.IDLE:
+            state_text = "Готовий до роботи"
+            time_text = f"{self.config.get('work_duration'):02d}:00"
+        else:
+            time_text = self.timer.get_time_formatted()
+            if state == TimerState.WORK:
+                state_text = "Робота"
+            elif state == TimerState.BREAK:
+                state_text = "Довга перерва" if self.timer.is_long_break else "Перерва"
             else:
-                self.state_label.config(text="☕ Перерва")
-            self.timer_label.config(foreground="#FF6F00")  # Помаранчевий
-            self.progress['value'] = self.timer.get_progress() * 100
+                state_text = "Пауза"
 
-        elif self.timer.state == TimerState.PAUSED:
-            self.state_label.config(text="⏸ На паузі")
-            self.timer_label.config(foreground="#757575")  # Сірий
+        progress = self.timer.get_progress()
+        page.ring.setCustomBarColor(*phase_colors(self.timer._previous_state if state == TimerState.PAUSED else state))
+        page.ring.setFormat(time_text)
+        page.ring.setValue(int(progress * 1000))
+        page.state_label.setText(state_text)
 
-        # Оновлюємо статистику
-        self.pomodoros_label.config(text=str(self.timer.completed_pomodoros))
+        every = self.timer.pomodoros_until_long_break
+        left = every - self.timer.completed_pomodoros % every
+        page.cycle_label.setText(f"До довгої перерви: {pomodoros_text(left)}")
+        page.stats_label.setText(f"Сьогодні: {pomodoros_text(self.config.get('completed_pomodoros', 0))}")
 
-    def run(self):
-        """Запуск головного циклу додатка"""
-        self.root.mainloop()
+        self._update_buttons()
+
+        mode = {TimerState.WORK: "work", TimerState.BREAK: "break"}.get(state, "idle")
+        self.tray_icon.update_time(time_text, progress, mode)
+
+    def _update_buttons(self):
+        """Стан кнопок визначається лише станом таймера"""
+        state = self.timer.state
+        if state == TimerState.IDLE:
+            self.primary_button.setText("Почати")
+            self.primary_button.setIcon(FluentIcon.PLAY)
+        elif state == TimerState.PAUSED:
+            self.primary_button.setText("Продовжити")
+            self.primary_button.setIcon(FluentIcon.PLAY)
+        else:
+            self.primary_button.setText("Пауза")
+            self.primary_button.setIcon(FluentIcon.PAUSE)
+
+        self.add_time_button.setEnabled(self.timer.is_running())
+        self.skip_to_break_button.setEnabled(state in (TimerState.IDLE, TimerState.WORK))
+        self.reset_button.setEnabled(state != TimerState.IDLE)
